@@ -1,0 +1,40 @@
+rules_version = '2';
+// Luật bảo mật Firestore: dán vào Firebase Console > Firestore Database > Rules > Publish
+service cloud.firestore {
+  match /databases/{db}/documents {
+    // Admin = tài khoản có users/{uid}.role == "admin" (tự đặt trong Firebase Console)
+    function isAdmin() {
+      return request.auth != null &&
+        get(/databases/$(db)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    match /products/{id} {            // ai cũng xem được, chỉ admin sửa
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /users/{uid} {             // mỗi người chỉ đọc/sửa hồ sơ của mình, không tự nâng quyền
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow create: if request.auth != null && request.auth.uid == uid && request.resource.data.role == 'customer';
+      allow update: if request.auth != null && request.auth.uid == uid && request.resource.data.role == resource.data.role;
+    }
+    match /carts/{uid} {             // giỏ hàng riêng của từng tài khoản
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /orders/{id} {
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.status == 'Chờ xác nhận';
+      allow read: if request.auth != null && (resource.data.uid == request.auth.uid || isAdmin());
+      // Admin sửa mọi trường. Khách chỉ được bấm "Tôi đã chuyển khoản" (đổi paymentStatus sang "Chờ xác nhận thanh toán")
+      allow update: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid
+                    && resource.data.paymentStatus == 'Chưa thanh toán'
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentStatus'])
+                    && request.resource.data.paymentStatus == 'Chờ xác nhận thanh toán');
+    }
+    match /feedbacks/{id} {          // ai cũng xem và gửi được, chỉ admin xóa
+      allow read: if true;
+      allow create: if request.resource.data.rating is int
+                    && request.resource.data.rating >= 1 && request.resource.data.rating <= 5
+                    && request.resource.data.content.size() < 1000;
+      allow delete: if isAdmin();
+    }
+  }
+}
